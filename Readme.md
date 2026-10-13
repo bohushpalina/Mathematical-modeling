@@ -2,14 +2,15 @@
 
 This repository contains laboratory works for the Mathematical Modeling course.
 
-The repository is organized by laboratory work and currently includes the first and second laboratory assignments. Each laboratory focuses on implementing mathematical or computational models, analyzing the obtained results, and visualizing the results where required.
+The repository is organized by laboratory work and currently includes the first, second and third laboratory assignments. Each laboratory focuses on implementing mathematical or computational models, analyzing the obtained results, and visualizing the results where required.
 
 ## Repository Contents
 
 Currently, the repository contains:
 
-- Laboratory Work 1 — Random Number Generators and Statistical Testing
-- Laboratory Work 2 — Modeling of Discrete Random Variables and Statistical Testing
+- Laboratory Work 1 — Random Number Generators and Statistical Testing (`lab1.py`)
+- Laboratory Work 2 — Modeling of Discrete Random Variables and Statistical Testing (`lab2.py`)
+- Laboratory Work 3 — Modeling of Continuous Random Variables and Statistical Testing (`lab3.py`)
 
 Additional laboratory works will be added to the repository as they are completed.
 
@@ -73,6 +74,45 @@ p_bin = 0.25
 
 Side-by-side bar charts comparing theoretical probability mass functions (PMF) with empirical relative frequencies derived from generated samples.
 
+## Laboratory Work 3
+
+### Variant 1
+
+Modeling and statistical analysis of continuous random variables:
+
+* **Normal Distribution**: $N(m, s^2)$ with $m = 0$, $s^2 = 9$
+* **Chi-square Distribution**: $\chi^2(k)$ with $k = 4$
+* **Student's t-Distribution**: $t(k)$ with $k = 6$
+
+Parameters & Settings:
+
+```text
+N = 1000
+ALPHA = 0.05
+MU = 0
+SIGMA2 = 9
+CHI_M = 4
+T_M = 6
+R = 10
+M_SIM = 2000
+
+```
+
+### Key Implementation Details
+
+* **Custom Pseudorandom Number Generation**: Linear Congruential Generator (LCG) used as the source of uniform random numbers.
+* **Box-Muller Transform**: Generation of standard normal values, scaled to $N(m, s^2)$ via $x = m + s \cdot z$.
+* **Transformation Methods**: $\chi^2(4)$ is modeled as $-2\ln(u_1 u_2)$; Student's $t(6)$ as $z / \sqrt{\chi^2_6 / 6}$.
+* **Statistical Moments**: Unbiased estimates of mathematical expectation and variance compared with true theoretical values.
+* **Kolmogorov Test**: Custom test built for each distribution using its theoretical CDF.
+* **Pearson's $\chi^2$ Test**: Custom test built for each distribution using $r = 10$ equiprobable intervals defined by theoretical quantiles.
+* **Cross-Validation**: Every generated sample is tested against every distribution with both criteria (3 samples × 3 hypotheses × 2 tests).
+* **Type I Error Analysis**: 2000 simulations per distribution to empirically verify that the probability of Type I error is close to $\alpha = 0.05$ for both tests.
+
+### Visualizations
+
+Histograms of the generated samples overlaid with theoretical probability density functions.
+
 ## Technologies
 
 * Python
@@ -86,3 +126,5 @@ Side-by-side bar charts comparing theoretical probability mass functions (PMF) w
 pip install numpy matplotlib scipy
 python <script_file>.py
 
+
+```

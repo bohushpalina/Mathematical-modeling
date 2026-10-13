@@ -1,288 +1,119 @@
+# Лабораторная работа №2. Моделирование дискретных СВ
+# Вариант 1: Бернулли Bi(1, 0.7); биномиальное Bi(5, 0.25)
+
 import math
+from bisect import bisect_right
 import matplotlib.pyplot as plt
 from scipy import stats
 
-# Количество реализаций (объем выборки)
-N = 1000
-# Уровень значимости для критерия Пирсона
-ALPHA = 0.05
+N = 1000          # объем выборки
+ALPHA = 0.05      # уровень значимости
+M_SIM = 10000     # число симуляций для ошибки I рода
 
-# Параметр распределения Бернулли
-p_ber = 0.7
+# Теоретические законы распределения {значение: вероятность}
+P_BER = 0.7
+M_BIN, P_BIN = 5, 0.25
+BER = {0: 1 - P_BER, 1: P_BER}
+BIN = {k: math.comb(M_BIN, k) * P_BIN ** k * (1 - P_BIN) ** (M_BIN - k) for k in range(M_BIN + 1)}
+LAWS = {"Бернулли Bi(1, 0.7)": BER, "Биномиальное Bi(5, 0.25)": BIN}
 
-# Параметры биномиального распределения
-m_bin = 5
-p_bin = 0.25
 
-# Класс линейного конгруэнтного генератора (ЛКГ) для псевдослучайных чисел
+# Линейный конгруэнтный генератор БСВ
 class LCG:
-    def __init__(self, seed=42):
-        # Инициализация параметров генератора: состояние, множитель, приращение, модуль
+    def __init__(self, seed=12345):
         self.state = seed
-        self.a = 1664525
-        self.c = 1013904223
-        self.m = 2**32
 
     def random(self):
-        # Обновление состояния формулой ЛКГ и возврат значения в диапазоне [0, 1)
-        self.state = (self.a * self.state + self.c) % self.m
-        return self.state / self.m
-
-# Создание глобального объекта генератора с фиксированным seed
-lcg = LCG(seed=12345)
-
-def uniform_random_sample(size):
-    return [lcg.random() for _ in range(size)]
+        self.state = (1664525 * self.state + 1013904223) % 2 ** 32
+        return self.state / 2 ** 32
 
 
-# Функция формирования теоретических вероятностей Бернулли
-def get_bernoulli_probs():
-    return {0: 1 - p_ber, 1: p_ber}
+lcg = LCG()
 
-# Функция формирования теоретических вероятностей биномиального закона
-def get_binomial_probs():
-    probs = {}
-    for k in range(m_bin + 1):
-        # Вычисление числа сочетаний через встроенный модуль math.comb
-        comb = math.comb(m_bin, k)
-        probs[k] = comb * (p_bin ** k) * ((1 - p_bin) ** (m_bin - k))
-    return probs
 
-# Функция моделирования дискретной случайной величины методом обратной функции
-def generate_discrete(probs_dict, size):
-    values = list(probs_dict.keys())
-    probabilities = list(probs_dict.values())
-    
-    # Построение массива кумулятивных вероятностей (функции распределения)
-    cdf = []
-    accumulated = 0.0
-    for p in probabilities:
-        accumulated += p
-        cdf.append(accumulated)
-    # Принудительная установка последнего элемента равным 1.0 для избежания погрешностей
+# Метод обратной функции: x_i, если F(x_{i-1}) <= u < F(x_i)
+def generate_discrete(probs, size):
+    values = list(probs)
+    cdf, acc = [], 0.0
+    for p in probs.values():
+        acc += p
+        cdf.append(acc)
     cdf[-1] = 1.0
-    
-    # Получение равномерно распределенных случайных чисел
-    uniforms = uniform_random_sample(size)
-    sample = []
-    
-    # Преобразование равномерных чисел в дискретную СВ методом инверсии
-    for u in uniforms:
-        chosen_val = values[-1]
-        for idx, bound in enumerate(cdf):
-            # Проверка попадания случайного числа в интервал кумулятивной вероятности
-            if u < bound:
-                chosen_val = values[idx]
-                break
-        sample.append(chosen_val)
-        
-    return sample
+    return [values[bisect_right(cdf, lcg.random())] for _ in range(size)]
 
 
-# Функция вычисления математического ожидания выборки
-def calculate_mean(sample):
-    return sum(sample) / len(sample)
+# Оценки: среднее и несмещенная дисперсия
+def mean_var(x):
+    m = sum(x) / len(x)
+    return m, sum((v - m) ** 2 for v in x) / (len(x) - 1)
 
-# Функция вычисления несмещенной оценки дисперсии
-def calculate_variance(sample, mean_val):
+
+# Критерий Пирсона с объединением интервалов (ожидаемая частота >= 5)
+def pearson_test(sample, probs, alpha=ALPHA, verbose=False):
     n = len(sample)
-    # Если в выборке меньше или равно 1 элемента, дисперсия равна нулю
-    if n <= 1:
-        return 0.0
-    # Сумма квадратов отклонений элементов от выборочного среднего
-    sq_diff_sum = sum((x - mean_val) ** 2 for x in sample)
-    return sq_diff_sum / (n - 1)
-
-
-# Функция проверки гипотезы с помощью критерия согласия Пирсона (Хи-квадрат)
-def pearson_chi2_test(sample, theor_probs, alpha=0.05, verbose=False):
-    n = len(sample)
-    sample_values = set(sample)
-    theor_values = set(theor_probs.keys())
-    
-    # Проверка на наличие в выборке значений, невозможных по теоретическому закону
-    if not sample_values.issubset(theor_values):
+    if not set(sample) <= set(probs):          # невозможные значения
         if verbose:
-            print("В выборке присутствуют значения, невозможные при данной гипотезе H0.")
+            print("  В выборке есть значения, невозможные при H0 -> ОТВЕРГАЕТСЯ")
         return float('inf'), 0.0, True
 
-    # Подсчет наблюдаемых частот каждого значения в выборке
-    counts = {k: 0 for k in theor_probs.keys()}
-    for val in sample:
-        if val in counts:
-            counts[val] += 1
-            
-    # Формирование упорядоченных массивов наблюдаемых и ожидаемых частот
-    observed = [counts[k] for k in sorted(theor_probs.keys())]
-    expected = [theor_probs[k] * n for k in sorted(theor_probs.keys())]
-    
-    obs_pooled = []
-    exp_pooled = []
-    temp_obs = 0
-    temp_exp = 0
-    
-    for o, e in zip(observed, expected):
-        temp_obs += o
-        temp_exp += e
-        # Если накопили сумму ожидаемых частот >= 5, формируем группу
-        if temp_exp >= 5:
-            obs_pooled.append(temp_obs)
-            exp_pooled.append(temp_exp)
-            temp_obs = 0
-            temp_exp = 0
-            
-    # Если на последнем шаге осталась группа с малой частотой, присоединяем ее к предыдущей
-    if temp_exp > 0:
-        if len(exp_pooled) > 0:
-            obs_pooled[-1] += temp_obs
-            exp_pooled[-1] += temp_exp
-        else:
-            obs_pooled.append(temp_obs)
-            exp_pooled.append(temp_exp)
-            
-    # Вычисление значения статистики хи-квадрат Пирсона
-    chi2_stat = sum(((o - e) ** 2) / e for o, e in zip(obs_pooled, exp_pooled))
-    # Определение числа степеней свободы (количество групп минус 1)
-    df = len(exp_pooled) - 1
-    
-    if df <= 0:
-        p_value = 0.0
-    else:
-        # Расчет p-value на основе функции распределения хи-квадрат
-        p_value = 1 - stats.chi2.cdf(chi2_stat, df)
-        
-    # Принятие или отклонение нулевой гипотезы на основе уровня значимости
-    reject_h0 = p_value < alpha
-    
+    obs, exp, o_acc, e_acc = [], [], 0, 0
+    for k in sorted(probs):
+        o_acc += sample.count(k)
+        e_acc += probs[k] * n
+        if e_acc >= 5:
+            obs.append(o_acc)
+            exp.append(e_acc)
+            o_acc = e_acc = 0
+    if e_acc > 0:                              # остаток присоединяем к последней группе
+        obs[-1] += o_acc
+        exp[-1] += e_acc
+
+    chi2 = sum((o - e) ** 2 / e for o, e in zip(obs, exp))
+    df = len(exp) - 1
+    p_value = 1 - stats.chi2.cdf(chi2, df)
+    reject = p_value < alpha
     if verbose:
-        print(f"  Статистика X^2: {chi2_stat:.4f}")
-        print(f"  Степени свободы: {df}")
-        print(f"  p-value: {p_value:.4f}")
-        if reject_h0:
-            print("  Результат: Гипотеза ОТВЕРГАЕТСЯ")
-        else:
-            print("  Результат: Гипотеза ПРИНИМАЕТСЯ")
-            
-    return chi2_stat, p_value, reject_h0
+        print(f"  X^2 = {chi2:.4f}, df = {df}, p-value = {p_value:.4f} -> "
+              f"{'ОТВЕРГАЕТСЯ' if reject else 'ПРИНИМАЕТСЯ'}")
+    return chi2, p_value, reject
 
 
-# Блок моделирования и первичного анализа выборок
+# 1. Моделирование и оценки
 print("1. МОДЕЛИРОВАНИЕ И ОЦЕНКА ПАРАМЕТРОВ\n")
+samples = {name: generate_discrete(p, N) for name, p in LAWS.items()}
+for name, p in LAWS.items():
+    m_true = sum(k * v for k, v in p.items())
+    v_true = sum(k * k * v for k, v in p.items()) - m_true ** 2
+    m_emp, v_emp = mean_var(samples[name])
+    print(name)
+    print(f"  Мат. ожидание: истинное = {m_true:.4f}, оценка = {m_emp:.4f}, разница = {abs(m_true - m_emp):.4f}")
+    print(f"  Дисперсия:     истинная = {v_true:.4f}, оценка = {v_emp:.4f}, разница = {abs(v_true - v_emp):.4f}\n")
 
-# Генерация выборок для обоих законов распределения
-sample_ber = generate_discrete(get_bernoulli_probs(), N)
-sample_bin = generate_discrete(get_binomial_probs(), N)
-
-# Расчет истинных теоретических характеристик
-mean_ber_true = p_ber
-var_ber_true = p_ber * (1 - p_ber)
-
-mean_bin_true = m_bin * p_bin
-var_bin_true = m_bin * p_bin * (1 - p_bin)
-
-# Расчет эмпирических оценок по полученным выборкам
-mean_ber_emp = calculate_mean(sample_ber)
-var_ber_emp = calculate_variance(sample_ber, mean_ber_emp)
-
-mean_bin_emp = calculate_mean(sample_bin)
-var_bin_emp = calculate_variance(sample_bin, mean_bin_emp)
-
-# Вывод результатов сравнения для распределения Бернулли
-print(f"Распределение Бернулли Bi(1, {p_ber})")
-print(f"Математическое ожидание: Истинное = {mean_ber_true:.4f}, Оценка = {mean_ber_emp:.4f}, Разница = {abs(mean_ber_true - mean_ber_emp):.4f}")
-print(f"Дисперсия:               Истинная = {var_ber_true:.4f}, Оценка = {var_ber_emp:.4f}, Разница = {abs(var_ber_true - var_ber_emp):.4f}\n")
-
-# Вывод результатов сравнения для биномиального распределения
-print(f"Биномиальное распределение Bi({m_bin}, {p_bin})")
-print(f"Математическое ожидание: Истинное = {mean_bin_true:.4f}, Оценка = {mean_bin_emp:.4f}, Разница = {abs(mean_bin_true - mean_bin_emp):.4f}")
-print(f"Дисперсия:               Истинная = {var_bin_true:.4f}, Оценка = {var_bin_emp:.4f}, Разница = {abs(var_bin_true - var_bin_emp):.4f}\n")
-
-
-# Блок визуализации данных
+# Графики: теоретические и эмпирические вероятности
 fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-def get_frequencies(sample, keys):
-    counts = {k: 0 for k in keys}
-    for val in sample:
-        if val in counts:
-            counts[val] += 1
-    return [counts[k] / N for k in keys]
-
-# Подготовка данных для гистограммы распределения Бернулли
-ber_probs = get_bernoulli_probs()
-x_ber = list(ber_probs.keys())
-y_ber_theor = list(ber_probs.values())
-y_ber_emp = get_frequencies(sample_ber, x_ber)
-
-# Построение графика для Бернулли
-axes[0].bar([x - 0.15 for x in x_ber], y_ber_theor, width=0.3, label='Теоретические', color='blue', alpha=0.7)
-axes[0].bar([x + 0.15 for x in x_ber], y_ber_emp, width=0.3, label='Эмпирические', color='orange', alpha=0.7)
-axes[0].set_xticks(x_ber)
-axes[0].set_title(f'Бернулли Bi(1, {p_ber})')
-axes[0].legend()
-
-# Подготовка данных для гистограммы биномиального распределения
-bin_probs = get_binomial_probs()
-x_bin = list(bin_probs.keys())
-y_bin_theor = list(bin_probs.values())
-y_bin_emp = get_frequencies(sample_bin, x_bin)
-
-# Построение графика для биномиального распределения
-axes[1].bar([x - 0.15 for x in x_bin], y_bin_theor, width=0.3, label='Теоретические', color='blue', alpha=0.7)
-axes[1].bar([x + 0.15 for x in x_bin], y_bin_emp, width=0.3, label='Эмпирические', color='orange', alpha=0.7)
-axes[1].set_xticks(x_bin)
-axes[1].set_title(f'Биномиальное Bi({m_bin}, {p_bin})')
-axes[1].legend()
-
+for ax, (name, p) in zip(axes, LAWS.items()):
+    x = list(p)
+    ax.bar([k - 0.15 for k in x], list(p.values()), width=0.3, label='Теоретические', alpha=0.7)
+    ax.bar([k + 0.15 for k in x], [samples[name].count(k) / N for k in x], width=0.3, label='Эмпирические', alpha=0.7)
+    ax.set_xticks(x)
+    ax.set_title(name)
+    ax.legend()
 plt.tight_layout()
 plt.show()
 
-# Блок проверки критерием хи-квадрат (кросс-проверка)
+# 2. Перекрестная проверка: каждая выборка каждым критерием
 print("2. ПРОВЕРКА КРИТЕРИЕМ ХИ-КВАДРАТ\n")
+for s_name, smp in samples.items():
+    for h_name, p in LAWS.items():
+        print(f"Выборка: {s_name} | H0: {h_name}")
+        pearson_test(smp, p, verbose=True)
 
-print("Кросс-проверка 1: Выборка Бернулли проверяется на гипотезу H0 = [Распределение Бернулли]")
-pearson_chi2_test(sample_ber, get_bernoulli_probs(), alpha=ALPHA, verbose=True)
-print("-" * 50)
-
-print("Кросс-проверка 2: Выборка Биномиальная проверяется на гипотезу H0 = [Биномиальное распределение]")
-pearson_chi2_test(sample_bin, get_binomial_probs(), alpha=ALPHA, verbose=True)
-print("-" * 50)
-
-print("Кросс-проверка 3: Выборка Биномиальная проверяется на гипотезу H0 = [Распределение Бернулли]")
-pearson_chi2_test(sample_bin, get_bernoulli_probs(), alpha=ALPHA, verbose=True)
-print("-" * 50)
-
-print("Кросс-проверка 4: Выборка Бернулли проверяется на гипотезу H0 = [Биномиальное распределение]")
-pearson_chi2_test(sample_ber, get_binomial_probs(), alpha=ALPHA, verbose=True)
-print("\n")
-
-
-# Блок исследования вероятности ошибки I рода
-print("3. ИССЛЕДОВАНИЕ ОШИБКИ I РОДА\n")
-print(f"Уровень значимости (теоретическая ошибка I рода): {ALPHA}")
-print("Выполняем 10 000 симуляций для точной оценки...\n")
-
-M_simulations = 10000
-reject_bernoulli = 0
-reject_binomial = 0
-
-# Цикл многократной симуляции для оценки эмпирического уровня ошибки
-for _ in range(M_simulations):
-    sim_ber = generate_discrete(get_bernoulli_probs(), N)
-    sim_bin = generate_discrete(get_binomial_probs(), N)
-    
-    # Тестирование сгенерированных выборок на их истинных законах распределения
-    _, _, rej_ber = pearson_chi2_test(sim_ber, get_bernoulli_probs(), alpha=ALPHA, verbose=False)
-    _, _, rej_bin = pearson_chi2_test(sim_bin, get_binomial_probs(), alpha=ALPHA, verbose=False)
-    
-    # Подсчет случаев ошибочного отклонения верной гипотезы
-    if rej_ber: reject_bernoulli += 1
-    if rej_bin: reject_binomial += 1
-
-# Вычисление эмпирической частоты ошибки I рода
-emp_alpha_ber = reject_bernoulli / M_simulations
-emp_alpha_bin = reject_binomial / M_simulations
-
-print(f"Эмпирическая ошибка I рода для Бернулли:      {emp_alpha_ber:.4f}")
-print(f"Эмпирическая ошибка I рода для Биномиального: {emp_alpha_bin:.4f}")
-print("Вывод: эмпирические значения на большом числе опытов стремятся к заданному ε = 0.05.")
+# 3. Ошибка I рода
+print(f"\n3. ИССЛЕДОВАНИЕ ОШИБКИ I РОДА (ε = {ALPHA}, симуляций: {M_SIM})\n")
+rejected = {name: 0 for name in LAWS}
+for _ in range(M_SIM):
+    for name, p in LAWS.items():
+        if pearson_test(generate_discrete(p, N), p)[2]:
+            rejected[name] += 1
+for name in LAWS:
+    print(f"Эмпирическая ошибка I рода, {name}: {rejected[name] / M_SIM:.4f}")
